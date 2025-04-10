@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>2.5D Creator with Three.js</title>
+    <style>
+        body {
+            margin: 0;
+            height: 100vh;
+            overflow: hidden;
+        }
+        #gameContainer {
+            width: 100vw;
+            height: 100vh;
+            position: relative;
+        }
+        #topButtons {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 10px;
+            z-index: 10;
+        }
+        #modeButtons {
+            position: absolute;
+            left: 20px;
+            top: 50%;
+            transform: translateY(-50%);
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            z-index: 10;
+        }
+        #testButton {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            padding: 10px 20px;
+            background: #0a8;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            z-index: 10;
+        }
+        #testButton:hover { background: #0c9; }
+        .topButton, .modeButton {
+            padding: 10px 20px;
+            background: #0a8;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        .topButton:hover, .modeButton:hover { background: #0c9; }
+        .modeButton { background: #444; }
+        .modeButton.active { background: #0a8; }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+    <div id="topButtons">
+        <button class="topButton" id="addCube">Add Cube</button>
+        <button class="topButton" id="addCone">Add Cone</button>
+        <button class="topButton" id="addSpinosaurus">Spinosaurus</button>
+        <button class="topButton" id="addTyrannosaurus">Tyrannosaurus</button>
+        <button class="topButton" id="addIndominus">Indominus</button>
+        <button class="topButton" id="addDoor">Door</button>
+    </div>
+    <div id="modeButtons">
+        <button class="modeButton active" id="rotateMode">Rotate Mode</button>
+        <button class="modeButton" id="moveMode">Move Mode</button>
+        <button class="modeButton" id="chainMode">Chain Mode</button>
+        <button class="modeButton" id="movementMode">Movement Mode</button>
+        <button class="modeButton" id="scaleMode">Scale Mode</button>
+        <button class="modeButton" id="clearAll">Clear All</button>
+    </div>
+    <button id="testButton">Test</button>
+    <div id="gameContainer"></div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
+    <script src="https://unpkg.com/three@0.134.0/examples/js/loaders/GLTFLoader.js"></script>
+    <script>
+        const gameContainer = document.getElementById('gameContainer');
+        const topButtons = document.getElementById('topButtons');
+        const modeButtons = document.getElementById('modeButtons');
+        const addCubeBtn = document.getElementById('addCube');
+        const addConeBtn = document.getElementById('addCone');
+        const addSpinosaurusBtn = document.getElementById('addSpinosaurus');
+        const addTyrannosaurusBtn = document.getElementById('addTyrannosaurus');
+        const addIndominusBtn = document.getElementById('addIndominus');
+        const addDoorBtn = document.getElementById('addDoor');
+        const rotateModeBtn = document.getElementById('rotateMode');
+        const moveModeBtn = document.getElementById('moveMode');
+        const chainModeBtn = document.getElementById('chainMode');
+        const movementModeBtn = document.getElementById('movementMode');
+        const scaleModeBtn = document.getElementById('scaleMode');
+        const clearAllBtn = document.getElementById('clearAll');
+        const testButton = document.getElementById('testButton');
+        let currentMode = 'rotate';
+        let isTestMode = false;
+        const defaultCameraPosition = new THREE.Vector3(0, 0, 500);
+
+        // Three.js setup
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x87CEEB);
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 10000); // Increased far plane
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        gameContainer.appendChild(renderer.domElement);
+        camera.position.copy(defaultCameraPosition);
+
+        // Lighting
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+        scene.add(ambientLight);
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 1.2);
+        directionalLight.position.set(5, 10, 7).normalize();
+        scene.add(directionalLight);
+        const pointLight = new THREE.PointLight(0xffffff, 1, 1000);
+        pointLight.position.set(0, 200, 200);
+        scene.add(pointLight);
+
+        const objects = [];
+        let selectedObject = null;
+        let isDragging = false;
+        let previousX, previousY;
+        let firstChainedObject = null;
+        const chainedPairs = [];
+        const outlineMaterial = new THREE.MeshBasicMaterial({ color: 0x8B0000, side: THREE.BackSide });
+        let controlledObject = null;
+        const clock = new THREE.Clock();
+        const terrainMaterial = new THREE.MeshPhongMaterial({ color: 0x808080 });
+
+        // Materials
+        const cubeMaterial = new THREE.MeshPhongMaterial({ color: 0x0080ff, transparent: true, opacity: 0.7, shininess: 50 });
+        const coneMaterial = new THREE.MeshPhongMaterial({ color: 0xffa500, transparent: true, opacity: 0.7, shininess: 50 });
+
+        // Initial cube
+        const cubeGeometry = new THREE.BoxGeometry(100, 100, 100);
+        const initialCube = new THREE.Mesh(cubeGeometry, cubeMaterial);
+        initialCube.position.set(0, 0, 0);
+        scene.add(initialCube);
+        objects.push(initialCube);
+
+        // Terrain (auto-spawned)
+        const terrainGeometry = new THREE.PlaneGeometry(2000, 2000);
+        const terrain = new THREE.Mesh(terrainGeometry, terrainMaterial);
+        terrain.position.set(0, 0, -15); // At z=-15
+        terrain.rotation.x = -Math.PI / 2;
+        scene.add(terrain);
+        objects.push(terrain);
+
+        // GLTF Loader
+        const loader = new THREE.GLTFLoader();
+
+        // Animation loop
+        function animate() {
+            requestAnimationFrame(animate);
+            const delta = clock.getDelta();
+
+            if (isTestMode && controlledObject) {
+                const speed = 300 * delta;
+                const rotationSpeed = 2 * delta;
+                const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(controlledObject.quaternion);
+                const right = new THREE.Vector3(-1, 0, 0).applyQuaternion(controlledObject.quaternion);
+
+                const newPosition = controlledObject.position.clone();
+                if (keys.w) newPosition.add(forward.multiplyScalar(speed));
+                if (keys.s) newPosition.add(forward.multiplyScalar(-speed));
+                if (keys.a) newPosition.add(right.multiplyScalar(speed));
+                if (keys.d) newPosition.add(right.multiplyScalar(-speed));
+                if (keys.up) controlledObject.rotation.x -= rotationSpeed;
+                if (keys.down) controlledObject.rotation.x += rotationSpeed;
+                if (keys.left) controlledObject.rotation.y += rotationSpeed;
+                if (keys.right) controlledObject.rotation.y -= rotationSpeed;
+
+                // Collision with terrain at z=-15
+                if (newPosition.z < -15) newPosition.z = -15;
+                controlledObject.position.copy(newPosition);
+
+                const offset = new THREE.Vector3(0, 100, 300);
+                camera.position.copy(controlledObject.position).add(offset);
+                camera.lookAt(controlledObject.position);
+
+                chainedPairs.forEach(pair => {
+                    if (pair.obj1 === controlledObject) {
+                        pair.obj2.position.copy(controlledObject.position).sub(pair.offset);
+                        if (pair.obj2.outline) pair.obj2.outline.position.copy(pair.obj2.position);
+                    } else if (pair.obj2 === controlledObject) {
+                        pair.obj1.position.copy(controlledObject.position).add(pair.offset);
+                        if (pair.obj1.outline) pair.obj1.outline.position.copy(pair.obj1.position);
+                    }
+                });
+            } else {
+                camera.position.lerp(defaultCameraPosition, 0.1);
+                camera.lookAt(0, 0, 0);
+            }
+
+            renderer.render(scene, camera);
+        }
+        animate();
+
+        // Outline handling
+        function removeOutlines() {
+            objects.forEach(obj => {
+                if (obj.outline) {
+                    scene.remove(obj.outline);
+                    obj.outline = null;
+                }
+            });
+        }
+
+        function addOutlines() {
+            objects.forEach(obj => {
+                if (!obj.outline) {
+                    const outline = new THREE.Mesh(obj.geometry || new THREE.BoxGeometry(), outlineMaterial);
+                    outline.scale.copy(obj.scale).multiplyScalar(1.05);
+                    outline.position.copy(obj.position);
+                    outline.rotation.copy(obj.rotation);
+                    obj.outline = outline;
+                    scene.add(outline);
+                }
+            });
+        }
+
+        // Mode toggling
+        rotateModeBtn.addEventListener('click', () => {
+            currentMode = 'rotate';
+            rotateModeBtn.classList.add('active');
+            moveModeBtn.classList.remove('active');
+            chainModeBtn.classList.remove('active');
+            movementModeBtn.classList.remove('active');
+            scaleModeBtn.classList.remove('active');
+            firstChainedObject = null;
+            removeOutlines();
+        });
+        moveModeBtn.addEventListener('click', () => {
+            currentMode = 'move';
+            moveModeBtn.classList.add('active');
+            rotateModeBtn.classList.remove('active');
+            chainModeBtn.classList.remove('active');
+            movementModeBtn.classList.remove('active');
+            scaleModeBtn.classList.remove('active');
+            firstChainedObject = null;
+            removeOutlines();
+        });
+        chainModeBtn.addEventListener('click', () => {
+            currentMode = 'chain';
+            chainModeBtn.classList.add('active');
+            rotateModeBtn.classList.remove('active');
+            moveModeBtn.classList.remove('active');
+            movementModeBtn.classList.remove('active');
+            scaleModeBtn.classList.remove('active');
+            firstChainedObject = null;
+            addOutlines();
+        });
+        movementModeBtn.addEventListener('click', () => {
+            currentMode = 'movement';
+            movementModeBtn.classList.add('active');
+            rotateModeBtn.classList.remove('active');
+            moveModeBtn.classList.remove('active');
+            chainModeBtn.classList.remove('active');
+            scaleModeBtn.classList.remove('active');
+            firstChainedObject = null;
+            addOutlines();
+        });
+        scaleModeBtn.addEventListener('click', () => {
+            currentMode = 'scale';
+            scaleModeBtn.classList.add('active');
+            rotateModeBtn.classList.remove('active');
+            moveModeBtn.classList.remove('active');
+            chainModeBtn.classList.remove('active');
+            movementModeBtn.classList.remove('active');
+            firstChainedObject = null;
+            removeOutlines();
+        });
+
+        // Test/Stop toggle
+        testButton.addEventListener('click', () => {
+            isTestMode = !isTestMode;
+            testButton.textContent = isTestMode ? 'Stop' : 'Test';
+            if (isTestMode) {
+                topButtons.classList.add('hidden');
+                modeButtons.classList.add('hidden');
+            } else {
+                topButtons.classList.remove('hidden');
+                modeButtons.classList.remove('hidden');
+                removeOutlines();
+                if (currentMode === 'chain' || currentMode === 'movement') addOutlines();
+            }
+        });
+
+        // Clear all objects
+        clearAllBtn.addEventListener('click', () => {
+            objects.forEach(obj => {
+                scene.remove(obj);
+                if (obj.outline) scene.remove(obj.outline);
+            });
+            objects.length = 0;
+            chainedPairs.length = 0;
+            firstChainedObject = null;
+            controlledObject = null;
+
+            const newCube = new THREE.Mesh(cubeGeometry, cubeMaterial);
+            newCube.position.set(0, 0, 0);
+            scene.add(newCube);
+            objects.push(newCube);
+
+            const newTerrain = new THREE.Mesh(terrainGeometry, terrainMaterial);
+            newTerrain.position.set(0, 0, -15);
+            newTerrain.rotation.x = -Math.PI / 2;
+            scene.add(newTerrain);
+            objects.push(newTerrain);
+
+            if (currentMode === 'chain' || currentMode === 'movement') addOutlines();
+        });
+
+        // Add new cube
+        addCubeBtn.addEventListener('click', () => {
+            const newCube = new THREE.Mesh(cubeGeometry, cubeMaterial);
+            const randX = (Math.random() - 0.5) * (window.innerWidth - 200);
+            const randY = (Math.random() - 0.5) * (window.innerHeight - 200);
+            newCube.position.set(randX, randY, 0);
+            scene.add(newCube);
+            objects.push(newCube);
+            if (currentMode === 'chain' || currentMode === 'movement') addOutlines();
+        });
+
+        // Add new cone
+        addConeBtn.addEventListener('click', () => {
+            const coneGeometry = new THREE.ConeGeometry(50, 100, 32);
+            const newCone = new THREE.Mesh(coneGeometry, coneMaterial);
+            const randX = (Math.random() - 0.5) * (window.innerWidth - 200);
+            const randY = (Math.random() - 0.5) * (window.innerHeight - 200);
+            newCone.position.set(randX, randY, 0);
+            scene.add(newCone);
+            objects.push(newCone);
+            if (currentMode === 'chain' || currentMode === 'movement') addOutlines();
+        });
+
+        // Add Spinosaurus
+        addSpinosaurusBtn.addEventListener('click', () => {
+            loader.load('https://files.catbox.moe/uzt1t8.glb', (gltf) => {
+                const model = gltf.scene;
+                const randX = (Math.random() - 0.5) * (window.innerWidth - 200);
+                const randY = (Math.random() - 0.5) * (window.innerHeight - 200);
+                model.position.set(randX, randY, 0);
+                model.scale.set(40, 40, 40);
+                scene.add(model);
+                objects.push(model);
+                if (currentMode === 'chain' || currentMode === 'movement') addOutlines();
+                console.log('Spinosaurus added at:', model.position);
+            }, undefined, (error) => {
+                console.error('Error loading Spinosaurus:', error);
+            });
+        });
+
+        // Add Tyrannosaurus
+        addTyrannosaurusBtn.addEventListener('click', () => {
+            loader.load('https://files.catbox.moe/hk87cr.glb', (gltf) => {
+                const model = gltf.scene;
+                const randX = (Math.random() - 0.5) * (window.innerWidth - 200);
+                const randY = (Math.random() - 0.5) * (window.innerHeight - 200);
+                model.position.set(randX, randY, 0);
+                model.scale.set(30, 30, 30);
+                scene.add(model);
+                objects.push(model);
+                if (currentMode === 'chain' || currentMode === 'movement') addOutlines();
+                console.log('Tyrannosaurus added at:', model.position);
+            }, undefined, (error) => {
+                console.error('Error loading Tyrannosaurus:', error);
+            });
+        });
+
+        // Add Indominus
+        addIndominusBtn.addEventListener('click', () => {
+            loader.load('https://files.catbox.moe/9aokbi.glb', (gltf) => {
+                const model = gltf.scene;
+                const randX = (Math.random() - 0.5) * (window.innerWidth - 200);
+                const randY = (Math.random() - 0.5) * (window.innerHeight - 200);
+                model.position.set(randX, randY, 0);
+                model.scale.set(35, 35, 35);
+                scene.add(model);
+                objects.push(model);
+                if (currentMode === 'chain' || currentMode === 'movement') addOutlines();
+                console.log('Indominus added at:', model.position);
+            }, undefined, (error) => {
+                console.error('Error loading Indominus:', error);
+            });
+        });
+
+        // Add Door
+        addDoorBtn.addEventListener('click', () => {
+            loader.load('https://files.catbox.moe/el83jp.glb', (gltf) => {
+                const model = gltf.scene;
+                const randX = (Math.random() - 0.5) * (window.innerWidth - 200);
+                const randY = (Math.random() - 0.5) * (window.innerHeight - 200);
+                model.position.set(randX, randY, 0);
+                model.scale.set(1, 1, 1);
+                scene.add(model);
+                objects.push(model);
+                if (currentMode === 'chain' || currentMode === 'movement') addOutlines();
+                console.log('Door added at:', model.position);
+            }, undefined, (error) => {
+                console.error('Error loading Door:', error);
+            });
+        });
+
+        // Mouse interaction
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+
+        gameContainer.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(objects, true);
+
+            if (intersects.length > 0) {
+                selectedObject = intersects[0].object;
+                while (selectedObject.parent && selectedObject.parent.type !== 'Scene') {
+                    selectedObject = selectedObject.parent;
+                }
+                if (selectedObject.type === 'Scene') {
+                    selectedObject = intersects[0].object.parent;
+                }
+                if (selectedObject === terrain) return; // Ignore terrain
+
+                if (currentMode === 'chain') {
+                    if (!firstChainedObject) {
+                        firstChainedObject = selectedObject;
+                        console.log('First object selected for chaining:', firstChainedObject);
+                    } else if (firstChainedObject !== selectedObject) {
+                        const offset = new THREE.Vector3()
+                            .subVectors(firstChainedObject.position, selectedObject.position);
+                        chainedPairs.push({ obj1: firstChainedObject, obj2: selectedObject, offset });
+                        console.log('Chained:', firstChainedObject, 'to', selectedObject);
+                        firstChainedObject = null;
+                    }
+                    return;
+                }
+
+                if (currentMode === 'movement') {
+                    if (!controlledObject) {
+                        controlledObject = selectedObject;
+                        console.log('Selected for movement:', controlledObject);
+                    }
+                    return;
+                }
+
+                isDragging = true;
+                previousX = e.clientX;
+                previousY = e.clientY;
+                console.log('Selected:', selectedObject);
+            }
+        });
+
+        gameContainer.addEventListener('mousemove', (e) => {
+            if (!isDragging || !selectedObject || currentMode === 'chain' || currentMode === 'movement') return;
+            const deltaX = (e.clientX - previousX) * 1.5;
+            const deltaY = (e.clientY - previousY) * 1.5;
+
+            if (currentMode === 'rotate') {
+                selectedObject.rotation.y += deltaX * 0.015;
+                selectedObject.rotation.x += deltaY * 0.015;
+                console.log('Rotating:', selectedObject.rotation);
+            } else if (currentMode === 'move') {
+                selectedObject.position.x += deltaX;
+                selectedObject.position.y -= deltaY;
+                selectedObject.position.x = Math.max(-window.innerWidth / 2 + 50, Math.min(selectedObject.position.x, window.innerWidth / 2 - 50));
+                selectedObject.position.y = Math.max(-window.innerHeight / 2 + 50, Math.min(selectedObject.position.y, window.innerHeight / 2 - 50));
+                if (selectedObject.position.z < -15) selectedObject.position.z = -15; // Collision
+                console.log('Moving to:', selectedObject.position);
+
+                chainedPairs.forEach(pair => {
+                    if (pair.obj1 === selectedObject) {
+                        pair.obj2.position.copy(selectedObject.position).sub(pair.offset);
+                        if (pair.obj2.outline) pair.obj2.outline.position.copy(pair.obj2.position);
+                    } else if (pair.obj2 === selectedObject) {
+                        pair.obj1.position.copy(selectedObject.position).add(pair.offset);
+                        if (pair.obj1.outline) pair.obj1.outline.position.copy(pair.obj1.position);
+                    }
+                });
+            } else if (currentMode === 'scale') {
+                const scaleFactor = 1 + (deltaY * 0.01); // Dragging up shrinks, down grows
+                selectedObject.scale.multiplyScalar(scaleFactor);
+                selectedObject.scale.clampScalar(0.1, 10); // Limit scale
+                if (selectedObject.outline) {
+                    selectedObject.outline.scale.copy(selectedObject.scale).multiplyScalar(1.05);
+                }
+                console.log('Scaling:', selectedObject.scale);
+            }
+
+            previousX = e.clientX;
+            previousY = e.clientY;
+        });
+
+        document.addEventListener('mouseup', () => {
+            isDragging = false;
+            selectedObject = null;
+            console.log('Mouse released');
+        });
+
+        // Mouse wheel zooming
+        gameContainer.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            const zoomSpeed = 10;
+            if (isTestMode && controlledObject) {
+                const offset = camera.position.clone().sub(controlledObject.position);
+                offset.z += e.deltaY * zoomSpeed;
+                offset.z = Math.max(100, Math.min(1000, offset.z)); // Limit zoom
+                camera.position.copy(controlledObject.position).add(offset);
+                camera.lookAt(controlledObject.position);
+            } else {
+                camera.position.z += e.deltaY * zoomSpeed;
+                camera.position.z = Math.max(100, Math.min(2000, camera.position.z)); // Limit zoom
+            }
+        });
+
+        // Keyboard controls
+        const keys = { w: false, a: false, s: false, d: false, up: false, down: false, left: false, right: false };
+        document.addEventListener('keydown', (e) => {
+            if (isTestMode) {
+                switch (e.key.toLowerCase()) {
+                    case 'w': keys.w = true; break;
+                    case 'a': keys.a = true; break;
+                    case 's': keys.s = true; break;
+                    case 'd': keys.d = true; break;
+                    case 'arrowup': keys.up = true; break;
+                    case 'arrowdown': keys.down = true; break;
+                    case 'arrowleft': keys.left = true; break;
+                    case 'arrowright': keys.right = true; break;
+                }
+            }
+        });
+        document.addEventListener('keyup', (e) => {
+            switch (e.key.toLowerCase()) {
+                case 'w': keys.w = false; break;
+                case 'a': keys.a = false; break;
+                case 's': keys.s = false; break;
+                case 'd': keys.d = false; break;
+                case 'arrowup': keys.up = false; break;
+                case 'arrowdown': keys.down = false; break;
+                case 'arrowleft': keys.left = false; break;
+                case 'arrowright': keys.right = false; break;
+            }
+        });
+    </script>
+</body>
+</html>
